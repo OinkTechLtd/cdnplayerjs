@@ -20,6 +20,19 @@
       grid-template-columns: 360px 1fr;
       min-height: 100vh;
     }
+    body.embed .layout {
+      display: block;
+    }
+    body.embed .panel {
+      display: none;
+    }
+    body.embed #player-wrap {
+      padding: 0;
+    }
+    body.embed #playerjs {
+      height: 100vh;
+      border-radius: 0;
+    }
     .panel {
       border-right: 1px solid #1f2638;
       padding: 16px;
@@ -187,13 +200,46 @@
       return entries;
     }
 
+    function resolveUrl(baseUrl, value) {
+      try {
+        return new URL(value, baseUrl).toString();
+      } catch (_) {
+        return value;
+      }
+    }
+
+    function hasPlaylistContent(raw) {
+      return raw.includes('#EXTM3U') || raw.includes('#EXTINF') || /https?:\/\//i.test(raw);
+    }
+
+    function parsePlaylistFromInput(rawInput, baseUrl) {
+      const entries = parsePlaylistText(rawInput);
+      return entries
+        .map((entry, index) => `[${safeTitle(entry.title, index)}]${resolveUrl(baseUrl, entry.url)}`)
+        .join(',');
+    }
+
     async function resolveSource(inputUrl) {
-      const isPlaylist = /\.(m3u8?|txt)(\?|#|$)/i.test(inputUrl);
-      if (!isPlaylist || /\.m3u8(\?|#|$)/i.test(inputUrl)) {
+      const trimmed = inputUrl.trim();
+
+      if (hasPlaylistContent(trimmed) && !/^https?:\/\//i.test(trimmed)) {
+        const fromInput = parsePlaylistFromInput(trimmed, window.location.href);
+        if (!fromInput) {
+          throw new Error('Плейлист из поля ввода пустой или неверного формата.');
+        }
+        return fromInput;
+      }
+
+      const isPlaylist = /\.(m3u8?|txt)(\?|#|$)/i.test(trimmed);
+      if (!isPlaylist || /\.m3u8(\?|#|$)/i.test(trimmed)) {
+        return trimmed;
+      }
+
+      if (!/^https?:\/\//i.test(trimmed)) {
         return inputUrl;
       }
 
-      const response = await fetch(inputUrl);
+      const response = await fetch(trimmed);
       if (!response.ok) {
         throw new Error(`Не удалось загрузить плейлист (${response.status})`);
       }
@@ -240,6 +286,11 @@
     async function initFromUrl() {
       const query = new URLSearchParams(window.location.search);
       const hash = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+      const isEmbed = query.get('embed') === '1' || hash.get('embed') === '1';
+
+      if (isEmbed) {
+        document.body.classList.add('embed');
+      }
 
       const source = query.get('src') || query.get('file') || query.get('stream');
       const enc = hash.get('enc') || query.get('enc');
@@ -280,9 +331,9 @@
       try {
         const payload = JSON.stringify({ stream, ts: Date.now() });
         const token = await encryptText(payload, secret || 'cdnplayerjs');
-        const url = `${window.location.origin}${window.location.pathname}#enc=${encodeURIComponent(token)}&k=${encodeURIComponent(secret || 'cdnplayerjs')}`;
+        const url = `${window.location.origin}${window.location.pathname}?embed=1#enc=${encodeURIComponent(token)}&k=${encodeURIComponent(secret || 'cdnplayerjs')}`;
         document.getElementById('encryptedOutput').value = url;
-        setStatus('Готово: зашифрованная ссылка создана.');
+        setStatus('Готово: зашифрованная ссылка создана. Это URL в режиме "только плеер".');
       } catch (error) {
         setStatus(`Ошибка шифрования: ${error.message}`);
       }
