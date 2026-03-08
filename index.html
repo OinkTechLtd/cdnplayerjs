@@ -286,13 +286,26 @@
     async function initFromUrl() {
       const query = new URLSearchParams(window.location.search);
       const hash = new URLSearchParams(window.location.hash.replace(/^#/, ''));
-      const isEmbed = query.get('embed') === '1' || hash.get('embed') === '1';
+      const source = query.get('src') || query.get('file') || query.get('stream');
+      const sourceEmbedRequested = (() => {
+        if (!source || !/^https?:\/\//i.test(source)) {
+          return false;
+        }
+
+        try {
+          const sourceUrl = new URL(source);
+          return sourceUrl.searchParams.get('embed') === '1';
+        } catch (_) {
+          return false;
+        }
+      })();
+
+      const isEmbed = query.get('embed') === '1' || hash.get('embed') === '1' || sourceEmbedRequested;
 
       if (isEmbed) {
         document.body.classList.add('embed');
       }
 
-      const source = query.get('src') || query.get('file') || query.get('stream');
       const enc = hash.get('enc') || query.get('enc');
       const key = hash.get('k') || query.get('k') || document.getElementById('secretInput').value;
 
