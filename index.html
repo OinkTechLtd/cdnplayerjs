@@ -10,111 +10,44 @@
     * { box-sizing: border-box; }
     body {
       margin: 0;
-      font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-      background: #090b13;
+      background: #000;
       color: #f5f8ff;
       min-height: 100vh;
+      font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
     }
-    .layout {
-      display: grid;
-      grid-template-columns: 360px 1fr;
-      min-height: 100vh;
-    }
-    body.embed .layout {
-      display: block;
-    }
-    body.embed .panel {
-      display: none;
-    }
-    body.embed #player-wrap {
-      padding: 0;
-    }
-    body.embed #playerjs {
+    #playerjs {
+      width: 100vw;
       height: 100vh;
-      border-radius: 0;
+      background: #000;
+      overflow: hidden;
     }
-    .panel {
-      border-right: 1px solid #1f2638;
-      padding: 16px;
-      background: #101522;
-    }
-    .panel h1 { margin: 0 0 12px; font-size: 20px; }
-    .hint { font-size: 12px; color: #9bb0d8; margin: 0 0 14px; }
-    label { display: block; font-size: 13px; margin: 10px 0 6px; color: #c8d5f0; }
-    input, textarea {
-      width: 100%;
-      border: 1px solid #28324d;
+    #status {
+      position: fixed;
+      left: 12px;
+      right: 12px;
+      bottom: 12px;
+      z-index: 9;
+      padding: 8px 10px;
       border-radius: 8px;
-      background: #080d18;
-      color: #fff;
-      padding: 10px;
-      font-size: 14px;
-    }
-    textarea { min-height: 98px; resize: vertical; }
-    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
-    button {
-      width: 100%;
-      background: #3d7bff;
-      color: #fff;
-      border: 0;
-      border-radius: 8px;
-      padding: 10px;
-      font-weight: 600;
-      cursor: pointer;
-    }
-    button.secondary { background: #1b2338; }
-    .status {
-      min-height: 38px;
-      margin-top: 10px;
-      border-radius: 8px;
-      border: 1px solid #273557;
-      background: #0c1324;
-      padding: 10px;
+      border: 1px solid rgba(255, 255, 255, 0.25);
+      background: rgba(9, 13, 24, 0.86);
+      color: #dbe5ff;
       font-size: 12px;
-      color: #b7c8eb;
+      line-height: 1.4;
+      pointer-events: none;
       white-space: pre-wrap;
-    }
-    #player-wrap { padding: 16px; }
-    #playerjs { width: 100%; height: calc(100vh - 32px); background: #000; border-radius: 12px; overflow: hidden; }
-    .small { font-size: 12px; color: #9fb2d8; margin-top: 10px; }
-    @media (max-width: 900px) {
-      .layout { grid-template-columns: 1fr; }
-      .panel { border-right: 0; border-bottom: 1px solid #1f2638; }
-      #playerjs { height: 56vh; }
+      backdrop-filter: blur(3px);
     }
   </style>
 </head>
 <body>
-  <div class="layout">
-    <aside class="panel">
-      <h1>CDNPlayerJS</h1>
-      <p class="hint">Поддержка: прямые ссылки (.m3u8, .mp4 и т.д.), плейлисты .m3u/.txt и зашифрованные ссылки.</p>
-
-      <label for="streamInput">Ссылка на поток или плейлист</label>
-      <input id="streamInput" placeholder="https://example.com/live.m3u8" />
-
-      <label for="secretInput">Ключ шифрования (AES-GCM)</label>
-      <input id="secretInput" value="cdnplayerjs" />
-
-      <div class="row">
-        <button id="playBtn">Запустить</button>
-        <button id="encryptBtn" class="secondary">Сгенерировать ссылку</button>
-      </div>
-
-      <label for="encryptedOutput">Зашифрованная ссылка</label>
-      <textarea id="encryptedOutput" readonly placeholder="Тут появится ссылка"></textarea>
-
-      <div class="status" id="status">Готово к запуску.</div>
-      <div class="small">Можно открыть страницу с <code>?src=...</code>, <code>?file=...</code> или <code>#enc=...</code>.</div>
-    </aside>
-
-    <main id="player-wrap">
-      <div id="playerjs"></div>
-    </main>
-  </div>
+  <div id="playerjs"></div>
+  <div id="status">Ожидание ссылки в адресной строке (?src=... или ?enc=...).</div>
 
   <script>
     let playerInstance = null;
+    const DEFAULT_SECRET = 'cdnplayerjs';
+    const TTL_MS = 24 * 60 * 60 * 1000;
 
     function setStatus(message) {
       document.getElementById('status').textContent = message;
@@ -269,7 +202,7 @@
 
     async function startPlayback(raw) {
       if (!raw) {
-        setStatus('Укажи ссылку на поток или плейлист.');
+        setStatus('Добавьте ссылку в адресную строку: ?src=https://...');
         return;
       }
 
@@ -277,80 +210,75 @@
       try {
         const fileSource = await resolveSource(raw.trim());
         createPlayer(fileSource);
-        setStatus('Поток запущен. Если это .m3u/.txt, каналы собраны в плейлист PlayerJS.');
+        setStatus('Поток запущен.');
       } catch (error) {
         setStatus(`Ошибка: ${error.message}`);
       }
     }
 
+    async function createEncryptedUrl(source, secret) {
+      const payload = JSON.stringify({
+        stream: source,
+        issuedAt: Date.now(),
+        expiresAt: Date.now() + TTL_MS
+      });
+      const token = await encryptText(payload, secret);
+      const url = new URL(window.location.href);
+      url.search = '';
+      url.hash = '';
+      url.searchParams.set('enc', token);
+      return url.toString();
+    }
+
     async function initFromUrl() {
       const query = new URLSearchParams(window.location.search);
-      const hash = new URLSearchParams(window.location.hash.replace(/^#/, ''));
       const source = query.get('src') || query.get('file') || query.get('stream');
-      const sourceEmbedRequested = (() => {
-        if (!source || !/^https?:\/\//i.test(source)) {
-          return false;
-        }
-
-        try {
-          const sourceUrl = new URL(source);
-          return sourceUrl.searchParams.get('embed') === '1';
-        } catch (_) {
-          return false;
-        }
-      })();
-
-      const isEmbed = query.get('embed') === '1' || hash.get('embed') === '1' || sourceEmbedRequested;
-
-      if (isEmbed) {
-        document.body.classList.add('embed');
-      }
-
-      const enc = hash.get('enc') || query.get('enc');
-      const key = hash.get('k') || query.get('k') || document.getElementById('secretInput').value;
+      const enc = query.get('enc') || new URLSearchParams(window.location.hash.replace(/^#/, '')).get('enc');
+      const key = query.get('k') || DEFAULT_SECRET;
 
       if (source) {
-        document.getElementById('streamInput').value = source;
+        try {
+          const encryptedUrl = await createEncryptedUrl(source, key);
+          window.history.replaceState({}, '', encryptedUrl);
+          setStatus('Ссылка зашифрована. Доступ к потоку активен 24 часа.');
+        } catch (error) {
+          setStatus(`Не удалось зашифровать ссылку: ${error.message}`);
+        }
         startPlayback(source);
         return;
       }
 
-      if (enc) {
-        try {
-          const json = await decryptText(enc, key);
-          const payload = JSON.parse(json);
-          const src = payload.stream || '';
-          document.getElementById('streamInput').value = src;
-          setStatus('Ссылка расшифрована. Запускаю поток...');
-          startPlayback(src);
-        } catch (error) {
-          setStatus(`Не удалось расшифровать ссылку: ${error.message}`);
-        }
-      }
-    }
-
-    document.getElementById('playBtn').addEventListener('click', () => {
-      startPlayback(document.getElementById('streamInput').value);
-    });
-
-    document.getElementById('encryptBtn').addEventListener('click', async () => {
-      const stream = document.getElementById('streamInput').value.trim();
-      const secret = document.getElementById('secretInput').value.trim();
-      if (!stream) {
-        setStatus('Сначала укажи поток для шифрования.');
+      if (!enc) {
+        setStatus('Ожидание ссылки. Пример: ?src=https://example.com/live.m3u8');
         return;
       }
 
       try {
-        const payload = JSON.stringify({ stream, ts: Date.now() });
-        const token = await encryptText(payload, secret || 'cdnplayerjs');
-        const url = `${window.location.origin}${window.location.pathname}?embed=1#enc=${encodeURIComponent(token)}&k=${encodeURIComponent(secret || 'cdnplayerjs')}`;
-        document.getElementById('encryptedOutput').value = url;
-        setStatus('Готово: зашифрованная ссылка создана. Это URL в режиме "только плеер".');
+        const json = await decryptText(enc, key);
+        const payload = JSON.parse(json);
+        const src = (payload && payload.stream) ? String(payload.stream).trim() : '';
+        const expiresAt = Number(payload.expiresAt || 0);
+
+        if (!src) {
+          throw new Error('В токене нет stream.');
+        }
+
+        if (!expiresAt || Number.isNaN(expiresAt)) {
+          throw new Error('В токене нет срока действия.');
+        }
+
+        if (Date.now() > expiresAt) {
+          const expiredAtText = new Date(expiresAt).toLocaleString('ru-RU');
+          throw new Error(`Срок действия ссылки истёк (${expiredAtText}).`);
+        }
+
+        const hoursLeft = Math.max(0, Math.ceil((expiresAt - Date.now()) / 3600000));
+        setStatus(`Ссылка активна. Осталось примерно ${hoursLeft} ч.`);
+        startPlayback(src);
       } catch (error) {
-        setStatus(`Ошибка шифрования: ${error.message}`);
+        setStatus(`Не удалось запустить поток: ${error.message}`);
       }
-    });
+    }
 
     initFromUrl();
   </script>
